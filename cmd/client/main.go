@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
 
 	game "github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	pubsub "github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -35,18 +34,56 @@ func main() {
 	exchange := fmt.Sprintf("%s.%s", route.PauseKey, username)
 	pubsub.DeclareAndBind(conn, route.ExchangePerilDirect, exchange, route.PauseKey, pubsub.Transient)
 
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
+	// state
+	state := game.NewGameState(username)
+	
+	// REPL
+	for {
+		in := game.GetInput()
+		if len(in) == 0 {
+			continue
+		}
 
-		log.Println("shutting down…")
-
-	// Clean up resources
-	if err := conn.Close(); err != nil {
-		log.Printf("error closing connection: %v", err)
+		firstWord := in[0]
+		switch (firstWord) {
+		case "spawn":
+			err := state.CommandSpawn(in)
+			if err != nil {
+				log.Println(err)
+			}
+		case "move":
+			_, err := state.CommandMove(in)
+			if err != nil {
+				log.Println(err)
+			}
+			log.Println("Moved army to location")
+		case "status":
+			state.CommandStatus()
+		case "help":
+			game.PrintClientHelp()
+		case "spam":
+			log.Println("Spamming not allowed yet!")
+		case "quit":
+			game.PrintQuit()
+			os.Exit(0)
+		default:
+			log.Println("Unknown command")
+		}
 	}
 
-	log.Println("goodbye")
+
+	// // wait for ctrl+c
+	// signalChan := make(chan os.Signal, 1)
+	// signal.Notify(signalChan, os.Interrupt)
+	// <-signalChan
+
+	// 	log.Println("shutting down…")
+
+	// // Clean up resources
+	// if err := conn.Close(); err != nil {
+	// 	log.Printf("error closing connection: %v", err)
+	// }
+
+	// log.Println("goodbye")
 }
 

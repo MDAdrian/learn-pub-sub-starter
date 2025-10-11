@@ -24,13 +24,19 @@ func main() {
 
 	fmt.Println("Connection to RBMQ was success!")
 
-	// create channel
-	ch, err := conn.Channel()
+	// // create channel
+	// ch, err := conn.Channel()
+	// if err != nil {
+	// 	log.Fatal("There was an error opening the channel: %w", err)
+	// }
+
+	ch, _, err := pubsub.DeclareAndBind(conn, route.ExchangePerilTopic, "game_logs", "game_logs.*", pubsub.Durable)
 	if err != nil {
-		log.Fatal("There was an error opening the channel: %w", err)
+		log.Fatal("Error declaring queue: %w", err)
 	}
 	
 
+	// REPL loop
 	for {
 		in := gamelogic.GetInput()
 		if len(in) == 0 {
@@ -44,13 +50,11 @@ func main() {
 			pubsub.PublishJSON(ch, route.ExchangePerilDirect, route.PauseKey, route.PlayingState {
 				IsPaused: true,	
 			})
-			break
 		case "resume":
 			log.Println("Got Resume")
 			pubsub.PublishJSON(ch, route.ExchangePerilDirect, route.PauseKey, route.PlayingState {
 				IsPaused: false,	
 			})
-			break
 		case "quit":
 			log.Println("Got Quit")
 
@@ -60,12 +64,9 @@ func main() {
 			}
 			log.Println("goodbye")
 			os.Exit(0)
-			break
 		default:
 			log.Println("Unknown command")
 		}
-
-
 	}
 
 
