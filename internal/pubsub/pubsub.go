@@ -11,25 +11,12 @@ import (
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	dat, err := json.Marshal(val)
 	if err != nil {
-		return fmt.Errorf("error marshalling JSON: %s", err)
+		return err
 	}
-
-	err = ch.ExchangeDeclare(exchange, "direct", false, false, false, false, nil)
-	if err != nil {
-		return fmt.Errorf("error declaring exchange: %w", err)
-	}
-
-	msg := amqp.Publishing {
+	return ch.PublishWithContext(context.Background(), exchange, key, false, false, amqp.Publishing{
 		ContentType: "application/json",
-		Body: dat,
-	}
-
-	err = ch.PublishWithContext(context.Background(), exchange, key, false, false, msg)
-	if err != nil {
-		return fmt.Errorf("error when publishing: %w", err)
-	}
-
-	return nil
+		Body:        dat,
+	})
 }
 
 type SimpleQueueType int
@@ -45,76 +32,81 @@ func DeclareAndBind(
 	exchange,
 	queueName,
 	key string,
-	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	queueType SimpleQueueType,
 ) (*amqp.Channel, amqp.Queue, error) {
-	// create channel
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("error opening the channel: %w", err)
+		return nil, amqp.Queue{}, fmt.Errorf("could not create channel: %v", err)
 	}
 
-	durable := false
-	autoDelete := false
-	exclusive := false
-	switch queueType {
-		case Durable:
-			durable = true
-		case Transient:
-			autoDelete = true
-			exclusive = true
-		default:
-			return nil, amqp.Queue{}, fmt.Errorf("unknown queue type: %d", queueType)
-	}
-
-	qu, err := ch.QueueDeclare(queueName, durable, autoDelete, exclusive, false, nil)
+	queue, err := ch.QueueDeclare(
+		queueName,                       // name
+		queueType == Durable, // durable
+		queueType != Durable, // delete when unused
+		queueType != Durable, // exclusive
+		false,                           // no-wait
+		nil,                             // args
+	)
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("error when declaring queue: %w", err)
+		return nil, amqp.Queue{}, fmt.Errorf("could not declare queue: %v", err)
 	}
 
-	err = ch.QueueBind(queueName, key, exchange, false, nil)
+	err = ch.QueueBind(
+		queue.Name, // queue name
+		key,        // routing key
+		exchange,   // exchange
+		false,      // no-wait
+		nil,        // args
+	)
 	if err != nil {
-		return nil, amqp.Queue{}, fmt.Errorf("error when binding queue: %w", err)
+		return nil, amqp.Queue{}, fmt.Errorf("could not bind queue: %v", err)
 	}
-
-	return ch, qu, nil
+	return ch, queue, nil
 }
 
 func SubscribeJSON[T any](
-    conn *amqp.Connection,
-    exchange,
-    queueName,
-    key string,
-    queueType SimpleQueueType, // an enum to represent "durable" or "transient"
-    handler func(T),
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T),
 ) error {
-	ch, _, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
 	if err != nil {
-		return fmt.Errorf("error declaring queue: %w", err)
+		return fmt.Errorf("could not declare and bind queue: %v", err)
 	}
 
-	deliveryChan, err := ch.Consume(queueName, "", false, false, false, false, nil)
+	msgs, err := ch.Consume(
+		queue.Name, // queue
+		"",         // consumer
+		false,      // auto-ack
+		false,      // exclusive
+		false,      // no-local
+		false,      // no-wait
+		nil,        // args
+	)
 	if err != nil {
-		return fmt.Errorf("error consuming channel: %w", err)
+		return fmt.Errorf("could not consume messages: %v", err)
+	}
+
+	unmarshaller := func(data []byte) (T, error) {
+		var target T
+		err := json.Unmarshal(data, &target)
+		return target, err
 	}
 
 	go func() {
-		for d := range deliveryChan {
-			var msg T
-
-			// 1) Unmarshal body into T
-			if err := json.Unmarshal(d.Body, &msg); err != nil {
-				fmt.Errorf("consumer: unmarshal error: %w", err)
+		defer ch.Close()
+		for msg := range msgs {
+			target, err := unmarshaller(msg.Body)
+			if err != nil {
+				fmt.Printf("could not unmarshal message: %v\n", err)
+				continue
 			}
-
-			// 2) Call handler
-			handler(msg)
-
-			// 3) Acknowledge the message to remove it from the queue
-			if err := d.Ack(false); err != nil {
-				fmt.Errorf("consumer: ack error: %w", err)
-			}
+			handler(target)
+			msg.Ack(false)
 		}
 	}()
-
 	return nil
 }

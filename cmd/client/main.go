@@ -21,8 +21,12 @@ func main() {
 		log.Fatal("There was an error with rbmq connection: %w", err)
 	}
 	defer conn.Close()
-
 	fmt.Println("Connection to RBMQ was success!")
+
+	publishCh, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("could not create channel: %v", err)
+	}
 
 	// ask for username
 	username, err := game.ClientWelcome()
@@ -30,14 +34,25 @@ func main() {
 		log.Fatal("There was an error getting the username: %w", err)
 	}
 
-	// bind
-	queueName := fmt.Sprintf("%s.%s", route.PauseKey, username)
-	pubsub.DeclareAndBind(conn, route.ExchangePerilDirect, queueName, route.PauseKey, pubsub.Transient)
-
 	// state
 	state := game.NewGameState(username)
 
-	pubsub.SubscribeJSON(conn, route.ExchangePerilDirect, queueName, route.PauseKey, pubsub.Transient, handlerPause(state))
+	pubsub.SubscribeJSON(conn, route.ExchangePerilDirect, 
+		fmt.Sprintf("%s.%s", route.PauseKey, username), 
+		route.PauseKey,
+		pubsub.Transient, 
+		handlerPause(state))
+	if err != nil {
+		log.Fatalf("could not subscribe to army moves: %v", err)
+	}
+	pubsub.SubscribeJSON(conn, route.ExchangePerilTopic, 
+		 fmt.Sprintf("%s.%s", route.ArmyMovesPrefix, username),
+		 route.ArmyMovesPrefix+".*", 
+		 pubsub.Transient, 
+		 handlerMove(state))
+	if err != nil {
+		log.Fatalf("could not subscribe to pause: %v", err)
+	}
 	
 	// REPL
 	for {
@@ -54,12 +69,22 @@ func main() {
 				log.Println(err)
 			}
 		case "move":
-			_, err := state.CommandMove(in)
+			mv, err := state.CommandMove(in)
 			if err != nil {
 				log.Println(err)
-			} else {
-				log.Println("Moved army to location")
+				continue
+			} 
+			pubsub.PublishJSON(
+				publishCh, 
+				route.ExchangePerilTopic, 
+				fmt.Sprintf("%s.%s", route.ArmyMovesPrefix, mv.Player.Username), 
+				mv,
+			)
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				continue
 			}
+			fmt.Printf("Moved %v units to %s\n", len(mv.Units), mv.ToLocation)
 		case "status":
 			state.CommandStatus()
 		case "help":
@@ -94,6 +119,13 @@ func handlerPause(gs *game.GameState) func(route.PlayingState) {
 	return func(ps route.PlayingState) {
 		defer fmt.Print("> ")
 		gs.HandlePause(ps)
+	}
+}
+
+func handlerMove(gs *game.GameState) func(game.ArmyMove) {
+	return func (am game.ArmyMove) {
+		defer fmt.Print(">")
+		gs.HandleMove(am)
 	}
 }
 
