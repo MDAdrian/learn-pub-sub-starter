@@ -78,3 +78,43 @@ func DeclareAndBind(
 
 	return ch, qu, nil
 }
+
+func SubscribeJSON[T any](
+    conn *amqp.Connection,
+    exchange,
+    queueName,
+    key string,
+    queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+    handler func(T),
+) error {
+	ch, _, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return fmt.Errorf("error declaring queue: %w", err)
+	}
+
+	deliveryChan, err := ch.Consume(queueName, "", false, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("error consuming channel: %w", err)
+	}
+
+	go func() {
+		for d := range deliveryChan {
+			var msg T
+
+			// 1) Unmarshal body into T
+			if err := json.Unmarshal(d.Body, &msg); err != nil {
+				fmt.Errorf("consumer: unmarshal error: %w", err)
+			}
+
+			// 2) Call handler
+			handler(msg)
+
+			// 3) Acknowledge the message to remove it from the queue
+			if err := d.Ack(false); err != nil {
+				fmt.Errorf("consumer: ack error: %w", err)
+			}
+		}
+	}()
+
+	return nil
+}

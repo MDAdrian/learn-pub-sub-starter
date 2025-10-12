@@ -31,11 +31,13 @@ func main() {
 	}
 
 	// bind
-	exchange := fmt.Sprintf("%s.%s", route.PauseKey, username)
-	pubsub.DeclareAndBind(conn, route.ExchangePerilDirect, exchange, route.PauseKey, pubsub.Transient)
+	queueName := fmt.Sprintf("%s.%s", route.PauseKey, username)
+	pubsub.DeclareAndBind(conn, route.ExchangePerilDirect, queueName, route.PauseKey, pubsub.Transient)
 
 	// state
 	state := game.NewGameState(username)
+
+	pubsub.SubscribeJSON(conn, route.ExchangePerilDirect, queueName, route.PauseKey, pubsub.Transient, handlerPause(state))
 	
 	// REPL
 	for {
@@ -55,8 +57,9 @@ func main() {
 			_, err := state.CommandMove(in)
 			if err != nil {
 				log.Println(err)
+			} else {
+				log.Println("Moved army to location")
 			}
-			log.Println("Moved army to location")
 		case "status":
 			state.CommandStatus()
 		case "help":
@@ -85,5 +88,12 @@ func main() {
 	// }
 
 	// log.Println("goodbye")
+}
+
+func handlerPause(gs *game.GameState) func(route.PlayingState) {
+	return func(ps route.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
+	}
 }
 
