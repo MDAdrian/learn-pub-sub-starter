@@ -37,7 +37,7 @@ func main() {
 	// state
 	state := game.NewGameState(username)
 
-	pubsub.SubscribeJSON(conn, route.ExchangePerilDirect, 
+	err = pubsub.SubscribeJSON(conn, route.ExchangePerilDirect, 
 		fmt.Sprintf("%s.%s", route.PauseKey, username), 
 		route.PauseKey,
 		pubsub.Transient, 
@@ -45,7 +45,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not subscribe to army moves: %v", err)
 	}
-	pubsub.SubscribeJSON(conn, route.ExchangePerilTopic, 
+	err = pubsub.SubscribeJSON(conn, route.ExchangePerilTopic, 
 		 fmt.Sprintf("%s.%s", route.ArmyMovesPrefix, username),
 		 route.ArmyMovesPrefix+".*", 
 		 pubsub.Transient, 
@@ -115,17 +115,25 @@ func main() {
 	// log.Println("goodbye")
 }
 
-func handlerPause(gs *game.GameState) func(route.PlayingState) {
-	return func(ps route.PlayingState) {
+func handlerPause(gs *game.GameState) func(route.PlayingState) pubsub.AckType {
+	return func(ps route.PlayingState) pubsub.AckType {
 		defer fmt.Print("> ")
 		gs.HandlePause(ps)
+		return pubsub.Ack
 	}
 }
 
-func handlerMove(gs *game.GameState) func(game.ArmyMove) {
-	return func (am game.ArmyMove) {
+func handlerMove(gs *game.GameState) func(game.ArmyMove) pubsub.AckType {
+	return func (am game.ArmyMove)  pubsub.AckType {
 		defer fmt.Print(">")
-		gs.HandleMove(am)
+		moveOutcome := gs.HandleMove(am)
+		if moveOutcome == game.MoveOutComeSafe || moveOutcome == game.MoveOutcomeMakeWar {
+			return pubsub.Ack
+		}
+		if moveOutcome == game.MoveOutcomeSamePlayer {
+			return pubsub.NackDiscard
+		}
+		return pubsub.NackDiscard
 	}
 }
 
