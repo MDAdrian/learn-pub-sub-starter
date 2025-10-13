@@ -52,7 +52,9 @@ func DeclareAndBind(
 		queueType != Durable, // delete when unused
 		queueType != Durable, // exclusive
 		false,                           // no-wait
-		nil,                             // args
+		amqp.Table{
+			"x-dead-letter-exchange": "peril_dlx",
+		},                             // args
 	)
 	if err != nil {
 		return nil, amqp.Queue{}, fmt.Errorf("could not declare queue: %v", err)
