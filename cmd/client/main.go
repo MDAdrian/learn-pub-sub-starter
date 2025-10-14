@@ -49,9 +49,20 @@ func main() {
 		 fmt.Sprintf("%s.%s", route.ArmyMovesPrefix, username),
 		 route.ArmyMovesPrefix+".*", 
 		 pubsub.Transient, 
-		 handlerMove(state))
+		 handlerMove(state, publishCh))
 	if err != nil {
 		log.Fatalf("could not subscribe to pause: %v", err)
+	}
+	err = pubsub.SubscribeJSON(
+		conn,
+		route.ExchangePerilTopic,
+		route.WarRecognitionsPrefix,
+		route.WarRecognitionsPrefix+".*",
+		pubsub.Durable,
+		handlerWar(state),
+	)
+	if err != nil {
+		log.Fatalf("could not subscribe to war declarations: %v", err)
 	}
 	
 	// REPL
@@ -123,16 +134,56 @@ func handlerPause(gs *game.GameState) func(route.PlayingState) pubsub.AckType {
 	}
 }
 
-func handlerMove(gs *game.GameState) func(game.ArmyMove) pubsub.AckType {
-	return func (am game.ArmyMove)  pubsub.AckType {
-		defer fmt.Print(">")
-		moveOutcome := gs.HandleMove(am)
-		if moveOutcome == game.MoveOutComeSafe || moveOutcome == game.MoveOutcomeMakeWar {
+func handlerMove(gs *game.GameState, publishCh *amqp.Channel) func(game.ArmyMove) pubsub.AckType {
+	return func(move game.ArmyMove) pubsub.AckType {
+		defer fmt.Print("> ")
+
+		moveOutcome := gs.HandleMove(move)
+		switch moveOutcome {
+		case game.MoveOutcomeSamePlayer:
+			return pubsub.Ack
+		case game.MoveOutComeSafe:
+			return pubsub.Ack
+		case game.MoveOutcomeMakeWar:
+			err := pubsub.PublishJSON(
+				publishCh,
+				route.ExchangePerilTopic,
+				route.WarRecognitionsPrefix+"."+gs.GetUsername(),
+				game.RecognitionOfWar{
+					Attacker: move.Player,
+					Defender: gs.GetPlayerSnap(),
+				},
+			)
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				return pubsub.NackRequeue
+			}
 			return pubsub.Ack
 		}
-		if moveOutcome == game.MoveOutcomeSamePlayer {
+
+		fmt.Println("error: unknown move outcome")
+		return pubsub.NackDiscard
+	}
+}
+
+func handlerWar(gs *game.GameState) func(dw game.RecognitionOfWar) pubsub.AckType {
+	return func(dw game.RecognitionOfWar) pubsub.AckType {
+		defer fmt.Print("> ")
+		warOutcome, _, _ := gs.HandleWar(dw)
+		switch warOutcome {
+		case game.WarOutcomeNotInvolved:
+			return pubsub.NackRequeue
+		case game.WarOutcomeNoUnits:
 			return pubsub.NackDiscard
+		case game.WarOutcomeOpponentWon:
+			return pubsub.Ack
+		case game.WarOutcomeYouWon:
+			return pubsub.Ack
+		case game.WarOutcomeDraw:
+			return pubsub.Ack
 		}
+
+		fmt.Println("error: unknown war outcome")
 		return pubsub.NackDiscard
 	}
 }
