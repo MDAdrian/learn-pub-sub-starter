@@ -24,16 +24,22 @@ func main() {
 
 	fmt.Println("Connection to RBMQ was success!")
 
-	// // create channel
-	// ch, err := conn.Channel()
-	// if err != nil {
-	// 	log.Fatal("There was an error opening the channel: %w", err)
-	// }
-
-	ch, _, err := pubsub.DeclareAndBind(conn, route.ExchangePerilTopic, "game_logs", "game_logs.*", pubsub.Durable)
+	// create channel
+	ch, err := conn.Channel()
 	if err != nil {
-		log.Fatal("Error declaring queue: %w", err)
+		log.Fatal("There was an error opening the channel: %w", err)
 	}
+
+	// ch, _, err := pubsub.DeclareAndBind(conn, route.ExchangePerilTopic, "game_logs", "game_logs.*", pubsub.Durable)
+	// if err != nil {
+	// 	log.Fatal("Error declaring queue: %w", err)
+	// }
+	pubsub.SubscribeGob(conn, route.ExchangePerilTopic, 
+		route.GameLogSlug,
+		route.GameLogSlug+".*",
+		pubsub.Durable,
+		handlerGameLogs(),
+	)
 	
 
 	// REPL loop
@@ -83,4 +89,16 @@ func main() {
 	// }
 
 	// log.Println("goodbye")
+}
+
+func handlerGameLogs() func(gameLog route.GameLog) pubsub.AckType {
+	return func(gameLog route.GameLog) pubsub.AckType {
+		defer fmt.Print("> ")
+		err := gamelogic.WriteLog(gameLog)
+		if err != nil {
+			log.Printf("error printing gamelog: %v\n", err)
+			return pubsub.NackRequeue
+		}
+		return pubsub.Ack
+	}
 }
