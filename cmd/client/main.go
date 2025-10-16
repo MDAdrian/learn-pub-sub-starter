@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	game "github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
@@ -102,7 +103,20 @@ func main() {
 		case "help":
 			game.PrintClientHelp()
 		case "spam":
-			log.Println("Spamming not allowed yet!")
+			secondWord := in[1]
+			spamCount, err := strconv.Atoi(secondWord)
+			if err != nil {
+				fmt.Println("conversion error:", err)
+				return
+			}
+			for range spamCount {
+				malLog := game.GetMaliciousLog()
+				err := publishGameLog(publishCh, username, malLog)
+				if err != nil {
+					fmt.Printf("error when publishing mal log: %v\n", err)
+				}
+			}
+			log.Printf("Spammed %v messages\n", spamCount)
 		case "quit":
 			game.PrintQuit()
 			os.Exit(0)
